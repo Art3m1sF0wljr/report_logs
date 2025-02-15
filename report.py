@@ -1,6 +1,7 @@
 import os
 import re
 from datetime import datetime
+from collections import defaultdict
 
 def extract_timestamp(filename):
     # Assuming the filename format is YYYYMMDD_HHMMSS_security.log, e.g. "20250212_114259_security.log"
@@ -10,19 +11,15 @@ def extract_timestamp(filename):
     return None
 
 def process_logs(log_folder):
-    # Get a list of all the security log files
     log_files = [f for f in os.listdir(log_folder) if f.endswith(".log") and f != "report.log"]
     
-    # Separate "current_security.log" from other logs
     current_log = None
     if "current_security.log" in log_files:
         current_log = "current_security.log"
         log_files.remove(current_log)
-    
-    # Sort the other log files by timestamp extracted from the filenames
+
     log_files.sort(key=lambda x: extract_timestamp(x) if extract_timestamp(x) else datetime.min)
 
-    # Add "current_security.log" to the end of the list
     if current_log:
         log_files.append(current_log)
 
@@ -36,7 +33,6 @@ def process_logs(log_folder):
                     if not line.startswith("[account]"):
                         report.write(line)
 
-    # Now, parse the report.log and categorize attacks
     categorize_attacks(report_file)
 
 def categorize_attacks(report_file):
@@ -45,38 +41,45 @@ def categorize_attacks(report_file):
         "TCP_FLOODING ATTACK": "report/TCP_FLOODING_report.txt",
         "LAND ATTACK": "report/LAND_report.txt",
         "UDP PORT SCAN ATTACK": "report/UDP_PORT_SCAN_report.txt",
-	"TCP PORT SCAN ATTACK": "report/TCP_PORT_SCAN_report.txt",
-	"SYN_FLOODING ATTACK": "report/SYN_FLOODING_report.txt",
-	"ICMP REDIRECT ATTACK": "report/ICMP_REDIRECT_report.txt",
+        "TCP PORT SCAN ATTACK": "report/TCP_PORT_SCAN_report.txt",
+        "SYN_FLOODING ATTACK": "report/SYN_FLOODING_report.txt",
+        "ICMP REDIRECT ATTACK": "report/ICMP_REDIRECT_report.txt",
     }
 
-    # Create all attack report files if they don't exist
-    for attack_type in attack_types.values():
-        with open(attack_type, "w") as _:
-            pass  # Just create the empty files
+    # Ensure the report directory exists
+    os.makedirs("report", exist_ok=True)
 
-    # Create the unknown attacks file
-    with open("report/unknown_attacks.txt", "w") as unknown_file:
-        pass  # Just create the empty file
-    
-    # Read the report.log and filter attacks
+    attack_data = {attack: defaultdict(set) for attack in attack_types}  # Store IP -> ports mapping
+
     with open(report_file, "r") as report:
         for line in report:
-            # Look for attack types
             match = re.search(r'kernel: (.*? ATTACK)', line)
             if match:
                 attack_name = match.group(1)
                 if attack_name in attack_types:
-                    # Write known attack to corresponding file
-                    attack_file_path = os.path.join(attack_types[attack_name])
+                    attack_file_path = attack_types[attack_name]
                     with open(attack_file_path, "a") as attack_file:
                         attack_file.write(line)
-                else:
-                    # Write unknown attack to unknown_attacks.txt
-                    with open("unknown_attacks.txt", "a") as unknown_file:
-                        unknown_file.write(line)
+                    
+                    # Extract SRC (source IP) and DPT (destination port)
+                    src_match = re.search(r'SRC=([\d\.]+)', line)
+                    dpt_match = re.search(r'DPT=(\d+)', line)
+                    if src_match and dpt_match:
+                        src_ip = src_match.group(1)
+                        dpt = int(dpt_match.group(1))
+                        attack_data[attack_name][src_ip].add(dpt)
+
+    # Append sorted IPs and ports at the end of each attack file
+    for attack_name, ip_data in attack_data.items():
+        attack_file_path = attack_types[attack_name]
+        with open(attack_file_path, "a") as attack_file:
+            attack_file.write("\n\n\n")  # Three newlines
+            for ip in sorted(ip_data.keys()):
+                sorted_ports = sorted(ip_data[ip])
+                port_list = ", ".join(map(str, sorted_ports))
+                attack_file.write(f"{ip}: {port_list}\n")
 
 if __name__ == "__main__":
-    log_folder = "/security_log/"  # Change this to your actual log folder path
+    log_folder = "/home/pi/program/security_log/"
     process_logs(log_folder)
     print("Attack reports generated. Check individual attack report files.")
