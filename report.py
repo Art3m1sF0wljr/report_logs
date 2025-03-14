@@ -4,7 +4,6 @@ from datetime import datetime
 from collections import defaultdict
 
 def extract_timestamp(filename):
-    # Assuming the filename format is YYYYMMDD_HHMMSS_security.log, e.g. "20250212_114259_security.log"
     match = re.match(r"(\d{8}_\d{6})_security\.log", filename)
     if match:
         return datetime.strptime(match.group(1), "%Y%m%d_%H%M%S")
@@ -45,41 +44,61 @@ def categorize_attacks(report_file):
         "SYN_FLOODING ATTACK": "report/SYN_FLOODING_report.txt",
         "ICMP REDIRECT ATTACK": "report/ICMP_REDIRECT_report.txt",
     }
+    unknown_attack_file = "report/UNKNOWN_ATTACKS_report.txt"
 
-    # Ensure the report directory exists
     os.makedirs("report", exist_ok=True)
 
-    attack_data = {attack: defaultdict(set) for attack in attack_types}  # Store IP -> ports mapping
+    attack_data = {attack: defaultdict(set) for attack in attack_types}
+    unknown_attacks = defaultdict(set)
+    unique_ips = set()  # Store all unique IPs
 
     with open(report_file, "r") as report:
         for line in report:
             match = re.search(r'kernel: (.*? ATTACK)', line)
             if match:
                 attack_name = match.group(1)
+                src_match = re.search(r'SRC=([\d\.]+)', line)
+                dpt_match = re.search(r'DPT=(\d+)', line)
+                src_ip = src_match.group(1) if src_match else "Unknown"
+                dpt = int(dpt_match.group(1)) if dpt_match else None
+                
                 if attack_name in attack_types:
                     attack_file_path = attack_types[attack_name]
-                    with open(attack_file_path, "a") as attack_file:
-                        attack_file.write(line)
-                    
-                    # Extract SRC (source IP) and DPT (destination port)
-                    src_match = re.search(r'SRC=([\d\.]+)', line)
-                    dpt_match = re.search(r'DPT=(\d+)', line)
-                    if src_match and dpt_match:
-                        src_ip = src_match.group(1)
-                        dpt = int(dpt_match.group(1))
-                        attack_data[attack_name][src_ip].add(dpt)
+                else:
+                    attack_file_path = unknown_attack_file
+                    unknown_attacks[src_ip].add(dpt)
 
-    # Append sorted IPs and ports at the end of each attack file
+                with open(attack_file_path, "a") as attack_file:
+                    attack_file.write(line)
+                
+                if attack_name in attack_types:
+                    attack_data[attack_name][src_ip].add(dpt)
+                unique_ips.add(src_ip)  # Collect unique IPs
+
     for attack_name, ip_data in attack_data.items():
         attack_file_path = attack_types[attack_name]
         with open(attack_file_path, "a") as attack_file:
-            attack_file.write("\n\n\n")  # Three newlines
+            attack_file.write("\n\n\n")
             for ip in sorted(ip_data.keys()):
                 sorted_ports = sorted(ip_data[ip])
                 port_list = ", ".join(map(str, sorted_ports))
                 attack_file.write(f"{ip}: {port_list}\n")
 
+    # Write unknown attacks to file
+    with open(unknown_attack_file, "a") as unknown_file:
+        unknown_file.write("\n\n\n")
+        for ip in sorted(unknown_attacks.keys()):
+            sorted_ports = sorted(filter(None, unknown_attacks[ip]))
+            port_list = ", ".join(map(str, sorted_ports)) if sorted_ports else "Unknown ports"
+            unknown_file.write(f"{ip}: {port_list}\n")
+
+    # Write all unique IPs to ip.txt
+    with open("ip.txt", "w") as ip_file:
+        for ip in sorted(unique_ips):
+            ip_file.write(f"{ip}\n")
+
 if __name__ == "__main__":
     log_folder = "/home/pi/program/security_log/"
     process_logs(log_folder)
     print("Attack reports generated. Check individual attack report files.")
+    print("List of unique IPs saved in ip.txt.")
