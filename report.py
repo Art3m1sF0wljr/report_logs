@@ -24,10 +24,10 @@ def process_logs(log_folder):
 
     report_file = os.path.join(log_folder, "report.log")
     
-    with open(report_file, "w") as report:
+    with open(report_file, "w", encoding='utf-8') as report:
         for filename in log_files:
             file_path = os.path.join(log_folder, filename)
-            with open(file_path, "r") as log_file:
+            with open(file_path, "r", encoding='latin-1') as log_file:
                 for line in log_file:
                     if not line.startswith("[account]"):
                         report.write(line)
